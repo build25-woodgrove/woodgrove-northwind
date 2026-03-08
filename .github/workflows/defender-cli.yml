@@ -1,0 +1,44 @@
+name: Defender CLI Scan (New CLI)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+  security-events: write
+
+jobs:
+  defender-cli-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Install the new Defender CLI from CDN
+      - name: Download Defender CLI
+        run: |
+          CLI_VERSION="latest"
+          CLI_URL="https://cli.dfd.security.azure.com/public/${CLI_VERSION}/Defender_linux-x64"
+          echo "Downloading Defender CLI from ${CLI_URL}..."
+          curl -fSL -o defender "${CLI_URL}"
+          chmod +x defender
+          echo "$(pwd)" >> $GITHUB_PATH
+
+      # Run all scanners using the new Defender CLI
+      - name: Run Defender CLI scan
+        run: |
+          defender run
+        env:
+          # OIDC token is automatically available via GitHub Actions
+          ACTIONS_ID_TOKEN_REQUEST_URL: ${{ env.ACTIONS_ID_TOKEN_REQUEST_URL }}
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: ${{ env.ACTIONS_ID_TOKEN_REQUEST_TOKEN }}
+
+      # Upload SARIF results to GitHub Security tab
+      - name: Upload SARIF results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: .gdn/
