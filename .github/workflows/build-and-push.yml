@@ -126,7 +126,7 @@ jobs:
             --arg artifactName "${{ env.IMAGE_NAME }}" \
             --arg artifactVersion "${{ env.IMAGE_VERSION }}" \
             --arg artifactDigest "${{ steps.push.outputs.digest }}" \
-            '{"name": $artifactName, "digest": $artifactDigest, "version": $artifactVersion, "registry_url": "https://azurecr.io", "repository": "shift-left-demo"}' \
+            '{"name": $artifactName, "digest": $artifactDigest, "version": $artifactVersion, "registry_url": "https://azurecr.io", "repository": "zava-shift-left-demo"}' \
             > create-record.json
           gh api -X POST orgs/${{ github.repository_owner }}/artifacts/metadata/storage-record --input create-record.json
         shell: bash
