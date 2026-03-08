@@ -6,9 +6,14 @@ on:
   workflow_dispatch:
 
 env:
-  ACR_ENDPOINT: ${{ vars.ACR_ENDPOINT }}
   IMAGE_NAME: shift-left-demo
   IMAGE_VERSION: v1.0.0-${{ github.run_number }}
+  # Azure ACR
+  ACR_ENDPOINT: ${{ vars.ACR_ENDPOINT }}
+  # GCP GAR
+  GCP_GAR_REGION: us
+  GCP_PROJECT_ID: mdc-demo
+  GCP_GAR_REPO: mdc-gcp-artifactregistry
 
 jobs:
   build-and-push:
@@ -30,6 +35,7 @@ jobs:
         with:
           images: |
             ${{ env.ACR_ENDPOINT }}/${{ env.IMAGE_NAME }}
+            ${{ env.GCP_GAR_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GCP_GAR_REPO }}/${{ env.IMAGE_NAME }}
           tags: |
             type=sha,prefix=
             type=raw,value=latest
@@ -42,15 +48,37 @@ jobs:
             org.opencontainers.image.title=${{ env.IMAGE_NAME }}
             org.opencontainers.image.version=${{ env.IMAGE_VERSION }}
 
-      # --- Login to ACR ---
+      # ============================================================
+      # Registry Logins
+      # ============================================================
+
+      # --- Login to Azure ACR ---
       - name: Log in to Azure Container Registry
         uses: docker/login-action@v3
         with:
           registry: ${{ env.ACR_ENDPOINT }}
-          username: ${{ secrets.REGISTRY_USERNAME }}
-          password: ${{ secrets.REGISTRY_PASSWORD }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
 
-      # --- Build and push with OCI labels (Method 2) ---
+      # --- Login to GCP GAR via Workload Identity Federation ---
+      - name: Authenticate to Google Cloud
+        id: gcp-auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Log in to GCP Artifact Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.GCP_GAR_REGION }}-docker.pkg.dev
+          username: oauth2accesstoken
+          password: ${{ steps.gcp-auth.outputs.access_token }}
+
+      # ============================================================
+      # Build and Push (single build, multi-registry push)
+      # ============================================================
+
       - name: Build and push Docker image
         id: push
         uses: docker/build-push-action@v5
@@ -60,19 +88,38 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-      # --- Method 3: GitHub Attestation for provenance ---
-      - name: Generate artifact attestation
+      # ============================================================
+      # Method 3: GitHub Attestations
+      # ============================================================
+
+      - name: Attestation for ACR image
         uses: actions/attest-build-provenance@v3
         with:
           subject-name: ${{ env.ACR_ENDPOINT }}/${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
 
+      - name: Attestation for GAR image
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-name: ${{ env.GCP_GAR_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GCP_GAR_REPO }}/${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+      # ============================================================
+      # Summary
+      # ============================================================
+
       - name: Summary
         run: |
           echo "### Container Image Published" >> $GITHUB_STEP_SUMMARY
-          echo "- **Registry:** ${{ env.ACR_ENDPOINT }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Image:** ${{ env.IMAGE_NAME }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Digest:** ${{ steps.push.outputs.digest }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Registry | Image | Digest |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| ACR (${{ env.ACR_ENDPOINT }}) | ${{ env.IMAGE_NAME }} | \`${DIGEST:0:20}...\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| GCP GAR (${{ env.GCP_GAR_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}) | ${{ env.IMAGE_NAME }} | \`${DIGEST:0:20}...\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **OCI Labels:** Applied (Method 2 - C2C mapping)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Attestation:** Generated (Method 3 - provenance)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Attestations:** Generated for both registries (Method 3 - provenance)" >> $GITHUB_STEP_SUMMARY
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
