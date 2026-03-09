@@ -9,7 +9,8 @@ env:
   IMAGE_NAME: shift-left-demo
   IMAGE_VERSION: v1.0.0-${{ github.run_number }}
   # Azure ACR
-  ACR_ENDPOINT: ${{ vars.ACR_ENDPOINT }}
+  ALPINE_ACR_ENDPOINT: ${{ vars.ALPINE_ACR_ENDPOINT }}
+  ACRGATED_ACR_ENDPOINT: ${{ vars.ACRGATED_ACR_ENDPOINT }}
   # GCP GAR
   GCP_GAR_REGION: us
   GCP_PROJECT_ID: mdc-demo
@@ -29,13 +30,53 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # --- Method 2: Generate OCI labels for Code-to-Runtime mapping ---
-      - name: Generate OCI metadata labels
-        id: meta
+      # ============================================================
+      # Determine which registries are available
+      # ============================================================
+      - name: Check GCP configuration
+        id: gcp-check
+        run: |
+          if [ -n "${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}" ]; then
+            echo "configured=true" >> $GITHUB_OUTPUT
+          else
+            echo "configured=false" >> $GITHUB_OUTPUT
+            echo "::notice::GCP secrets not configured - skipping GCP GAR push"
+          fi
+
+      # ============================================================
+      # Generate OCI labels for Code-to-Runtime (C2C) mapping
+      # ============================================================
+      - name: Generate OCI metadata labels (ACR only)
+        if: steps.gcp-check.outputs.configured == 'false'
+        id: meta-acr
         uses: docker/metadata-action@v5
         with:
           images: |
-            ${{ env.ACR_ENDPOINT }}/${{ env.IMAGE_NAME }}
+            ${{ env.ALPINE_ACR_ENDPOINT }}/${{ env.IMAGE_NAME }}
+            ${{ env.ACRGATED_ACR_ENDPOINT }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=
+            type=raw,value=latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.ref.name=${{ github.ref_name }}
+            org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
+            org.opencontainers.image.url=https://github.com/${{ github.repository }}
+            org.opencontainers.image.title=${{ env.IMAGE_NAME }}
+            org.opencontainers.image.version=${{ env.IMAGE_VERSION }}
+            org.label-schema.vcs-url=https://github.com/${{ github.repository }}
+            com.azure.dev.image.build.repository.uri=https://github.com/${{ github.repository }}
+            com.visualstudio.msazure.image.build.repository.uri=https://github.com/${{ github.repository }}
+
+      - name: Generate OCI metadata labels (ACR + GCP)
+        if: steps.gcp-check.outputs.configured == 'true'
+        id: meta-all
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ env.ALPINE_ACR_ENDPOINT }}/${{ env.IMAGE_NAME }}
+            ${{ env.ACRGATED_ACR_ENDPOINT }}/${{ env.IMAGE_NAME }}
             ${{ env.GCP_GAR_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GCP_GAR_REPO }}/${{ env.IMAGE_NAME }}
           tags: |
             type=sha,prefix=
@@ -52,20 +93,49 @@ jobs:
             com.azure.dev.image.build.repository.uri=https://github.com/${{ github.repository }}
             com.visualstudio.msazure.image.build.repository.uri=https://github.com/${{ github.repository }}
 
+      # Merge outputs - whichever meta step ran
+      - name: Set metadata outputs
+        id: meta
+        run: |
+          if [ "${{ steps.gcp-check.outputs.configured }}" == "true" ]; then
+            echo "tags<<EOF" >> $GITHUB_OUTPUT
+            echo "${{ steps.meta-all.outputs.tags }}" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+            echo "labels<<EOF" >> $GITHUB_OUTPUT
+            echo "${{ steps.meta-all.outputs.labels }}" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          else
+            echo "tags<<EOF" >> $GITHUB_OUTPUT
+            echo "${{ steps.meta-acr.outputs.tags }}" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+            echo "labels<<EOF" >> $GITHUB_OUTPUT
+            echo "${{ steps.meta-acr.outputs.labels }}" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          fi
+
       # ============================================================
       # Registry Logins
       # ============================================================
 
-      # --- Login to Azure ACR ---
-      - name: Log in to Azure Container Registry
+      # --- Login to Azure ACR (Alpine) ---
+      - name: Log in to Alpine ACR
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.ACR_ENDPOINT }}
-          username: ${{ secrets.REGISTRY_USERNAME }}
-          password: ${{ secrets.REGISTRY_PASSWORD }}
+          registry: ${{ env.ALPINE_ACR_ENDPOINT }}
+          username: ${{ secrets.ALPINE_ACR_USERNAME }}
+          password: ${{ secrets.ALPINE_ACR_PASSWORD }}
 
-      # --- Login to GCP GAR via Workload Identity Federation ---
+      # --- Login to Azure ACR (Gated) ---
+      - name: Log in to Acrgated ACR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.ACRGATED_ACR_ENDPOINT }}
+          username: ${{ secrets.ACRGATED_ACR_USERNAME }}
+          password: ${{ secrets.ACRGATED_ACR_PASSWORD }}
+
+      # --- Login to GCP GAR via Workload Identity Federation (conditional) ---
       - name: Authenticate to Google Cloud
+        if: steps.gcp-check.outputs.configured == 'true'
         id: gcp-auth
         uses: google-github-actions/auth@v2
         with:
@@ -73,6 +143,7 @@ jobs:
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
       - name: Log in to GCP Artifact Registry
+        if: steps.gcp-check.outputs.configured == 'true'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.GCP_GAR_REGION }}-docker.pkg.dev
@@ -80,7 +151,7 @@ jobs:
           password: ${{ steps.gcp-auth.outputs.access_token }}
 
       # ============================================================
-      # Build and Push (single build, multi-registry push)
+      # Build and Push
       # ============================================================
 
       - name: Build and push Docker image
@@ -93,17 +164,25 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
 
       # ============================================================
-      # Method 3: GitHub Attestations
+      # GitHub Attestations
       # ============================================================
 
-      - name: Attestation for ACR image
+      - name: Attestation for Alpine ACR image
         uses: actions/attest-build-provenance@v3
         with:
-          subject-name: ${{ env.ACR_ENDPOINT }}/${{ env.IMAGE_NAME }}
+          subject-name: ${{ env.ALPINE_ACR_ENDPOINT }}/${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+      - name: Attestation for Acrgated ACR image
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-name: ${{ env.ACRGATED_ACR_ENDPOINT }}/${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
 
       - name: Attestation for GAR image
+        if: steps.gcp-check.outputs.configured == 'true'
         uses: actions/attest-build-provenance@v3
         with:
           subject-name: ${{ env.GCP_GAR_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GCP_GAR_REPO }}/${{ env.IMAGE_NAME }}
@@ -111,11 +190,7 @@ jobs:
           push-to-registry: true
 
       # ============================================================
-      # Summary
-      # ============================================================
-
-      # ============================================================
-      # Artifact Metadata Storage Record (matches zava-webshop pattern)
+      # Artifact Metadata Storage Record
       # ============================================================
 
       - name: Create artifact metadata storage record
@@ -131,16 +206,23 @@ jobs:
           gh api -X POST orgs/${{ github.repository_owner }}/artifacts/metadata/storage-record --input create-record.json
         shell: bash
 
+      # ============================================================
+      # Summary
+      # ============================================================
+
       - name: Summary
         run: |
           echo "### Container Image Published" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Registry | Image | Digest |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|-------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| ACR (${{ env.ACR_ENDPOINT }}) | ${{ env.IMAGE_NAME }} | \`${DIGEST:0:20}...\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| GCP GAR (${{ env.GCP_GAR_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}) | ${{ env.IMAGE_NAME }} | \`${DIGEST:0:20}...\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Alpine ACR (${{ env.ALPINE_ACR_ENDPOINT }}) | ${{ env.IMAGE_NAME }} | \`${DIGEST:0:20}...\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Acrgated ACR (${{ env.ACRGATED_ACR_ENDPOINT }}) | ${{ env.IMAGE_NAME }} | \`${DIGEST:0:20}...\` |" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.gcp-check.outputs.configured }}" == "true" ]; then
+            echo "| GCP GAR (${{ env.GCP_GAR_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}) | ${{ env.IMAGE_NAME }} | \`${DIGEST:0:20}...\` |" >> $GITHUB_STEP_SUMMARY
+          fi
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **OCI Labels:** Applied (Method 2 - C2C mapping)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Attestations:** Generated for both registries (Method 3 - provenance)" >> $GITHUB_STEP_SUMMARY
+          echo "- **OCI Labels:** Applied (C2C mapping)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Attestations:** Generated for all configured registries" >> $GITHUB_STEP_SUMMARY
         env:
           DIGEST: ${{ steps.push.outputs.digest }}
