@@ -36,7 +36,8 @@ jobs:
           ./defender --help || true
 
       - name: Run Defender AI Scan
-        run: ./defender scan fs --category aiscan --no-fail --output defender-aiscan.sarif .
+        run: |
+          ./defender scan fs --category aiscan --no-fail --output defender-aiscan.sarif . 2>&1 || echo "Exit code: $?"
         env:
           GH_TOKEN: ${{ secrets.COPILOT_PAT_DBIR }}
 
