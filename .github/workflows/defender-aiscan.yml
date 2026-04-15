@@ -19,6 +19,9 @@ jobs:
         with:
           node-version: '25'
 
+      - name: Install ripgrep
+        run: sudo apt-get install -y ripgrep
+
       - name: Download Defender CLI (aiscan preview)
         run: |
           gh release download v0.0.1-aiscan-preview -p 'defender-linux' -R build25-woodgrove/woodgrove-northwind
