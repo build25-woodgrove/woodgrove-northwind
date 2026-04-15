@@ -6,7 +6,6 @@ on:
   workflow_dispatch:
 
 permissions:
-  id-token: write
   contents: read
   security-events: write
 
@@ -38,7 +37,7 @@ jobs:
       - name: Run Defender AI Scan
         run: |
           set +e
-          ./defender scan fs --category aiscan --no-fail --output defender-aiscan.sarif .
+          ./defender scan fs --category aiscan --no-fail --no-publish --output defender-aiscan.sarif .
           rc=$?
           echo "--- Exit code: $rc ---"
           ls -la defender-aiscan.sarif 2>/dev/null || echo "No SARIF file produced"
