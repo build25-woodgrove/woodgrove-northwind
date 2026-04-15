@@ -45,6 +45,7 @@ jobs:
           exit 0
         env:
           GH_TOKEN: ${{ secrets.COPILOT_PAT_DBIR }}
+          GOTRACEBACK: crash
 
       - name: Upload SARIF results
         uses: github/codeql-action/upload-sarif@v4
