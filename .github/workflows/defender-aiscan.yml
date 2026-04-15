@@ -20,10 +20,13 @@ jobs:
         with:
           node-version: '25'
 
-      - name: Download Defender CLI (staging)
+      - name: Download Defender CLI (aiscan preview)
         run: |
-          curl -L -o defender "https://cli.dfd.security.stage.azure-test.net/public/v2/latest/Defender_linux-x64"
+          gh release download v0.0.1-aiscan-preview -p 'Defender_linux-x64' -R build25-woodgrove/woodgrove-northwind
+          mv Defender_linux-x64 defender
           chmod +x defender
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - name: Run Defender AI Scan
         run: ./defender scan fs --category aiscan --no-fail --output defender-aiscan.sarif .
