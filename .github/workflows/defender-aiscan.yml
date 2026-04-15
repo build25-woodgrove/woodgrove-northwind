@@ -28,6 +28,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
+      - name: Debug binary
+        run: |
+          file ./defender
+          ls -la ./defender
+          ./defender --version || true
+          ./defender --help || true
+
       - name: Run Defender AI Scan
         run: ./defender scan fs --category aiscan --no-fail --output defender-aiscan.sarif .
         env:
