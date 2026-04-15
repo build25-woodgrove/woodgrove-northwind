@@ -27,25 +27,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-      - name: Debug binary
-        run: |
-          file ./defender
-          ls -la ./defender
-          ./defender --version || true
-          ./defender --help || true
-
       - name: Run Defender AI Scan
-        run: |
-          set +e
-          ./defender scan fs --category aiscan --no-fail --no-publish --output defender-aiscan.sarif .
-          rc=$?
-          echo "--- Exit code: $rc ---"
-          ls -la defender-aiscan.sarif 2>/dev/null || echo "No SARIF file produced"
-          cat defender-aiscan.sarif 2>/dev/null | head -50 || true
-          exit 0
+        run: ./defender scan fs --category aiscan --no-publish --output defender-aiscan.sarif .
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.COPILOT_PAT_DBIR }}
-          GOTRACEBACK: crash
 
       - name: Upload SARIF results
         uses: github/codeql-action/upload-sarif@v4
