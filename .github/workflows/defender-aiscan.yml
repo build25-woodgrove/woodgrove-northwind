@@ -22,8 +22,8 @@ jobs:
 
       - name: Download Defender CLI (aiscan preview)
         run: |
-          gh release download v0.0.1-aiscan-preview -p 'Defender_linux-x64' -R build25-woodgrove/woodgrove-northwind
-          mv Defender_linux-x64 defender
+          gh release download v0.0.1-aiscan-preview -p 'defender-linux' -R build25-woodgrove/woodgrove-northwind
+          mv defender-linux defender
           chmod +x defender
         env:
           GH_TOKEN: ${{ github.token }}
