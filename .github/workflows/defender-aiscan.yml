@@ -37,7 +37,13 @@ jobs:
 
       - name: Run Defender AI Scan
         run: |
-          ./defender scan fs --category aiscan --no-fail --output defender-aiscan.sarif . 2>&1 || echo "Exit code: $?"
+          set +e
+          ./defender scan fs --category aiscan --no-fail --output defender-aiscan.sarif .
+          rc=$?
+          echo "--- Exit code: $rc ---"
+          ls -la defender-aiscan.sarif 2>/dev/null || echo "No SARIF file produced"
+          cat defender-aiscan.sarif 2>/dev/null | head -50 || true
+          exit 0
         env:
           GH_TOKEN: ${{ secrets.COPILOT_PAT_DBIR }}
 
