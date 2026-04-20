@@ -5,7 +5,7 @@ Flask==1.0
 requests==2.25.0
 Jinja2==2.11.3
 cryptography==3.4
-Pillow==8.0
+Pillow==12.1.1
 urllib3==1.26.4
 paramiko==2.7.2
 PyYAML==5.3.1
