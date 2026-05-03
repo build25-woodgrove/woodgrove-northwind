@@ -29,6 +29,7 @@ jobs:
       attestations: write
       artifact-metadata: write
       packages: write
+      security-events: write
 
     steps:
       - name: Checkout code
@@ -186,6 +187,39 @@ jobs:
           GCP_IMAGE="${{ env.GCP_GAR_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GCP_GAR_REPO }}/${{ env.IMAGE_NAME }}"
           docker push "${GCP_IMAGE}:${{ github.sha }}"
           docker push "${GCP_IMAGE}:latest"
+
+      # ============================================================
+      # Defender for Cloud CLI - Container Image Scan
+      # ============================================================
+
+      - name: Download Defender for Cloud CLI
+        run: |
+          curl -L -o defender "https://aka.ms/defender-cli_linux-x64"
+          chmod +x defender
+
+      - name: Run Defender for Cloud CLI Scan
+        run: |
+          ./defender scan image '${{ env.ALPINE_ACR_ENDPOINT }}/${{ env.IMAGE_NAME }}:${{ github.sha }}'
+        continue-on-error: true
+        env:
+          DEFENDER_TENANT_ID: ${{ secrets.DEFENDER_TENANT_ID }}
+          DEFENDER_CLIENT_ID: ${{ secrets.DEFENDER_CLIENT_ID }}
+          DEFENDER_CLIENT_SECRET: ${{ secrets.DEFENDER_CLIENT_SECRET }}
+
+      - name: Find SARIF results
+        if: always()
+        id: sarif
+        run: |
+          SARIF_FILE=$(find .gdn -path '*/.r/mdvm/*/mdvm.sarif' -type f 2>/dev/null | head -1)
+          echo "sarif_file=${SARIF_FILE}" >> $GITHUB_OUTPUT
+          echo "Found SARIF: ${SARIF_FILE:-none}"
+
+      - name: Upload SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v4
+        if: always() && steps.sarif.outputs.sarif_file != ''
+        with:
+          sarif_file: ${{ steps.sarif.outputs.sarif_file }}
+          category: defender-cli-image-scan
 
       # ============================================================
       # Get image digest for attestations
